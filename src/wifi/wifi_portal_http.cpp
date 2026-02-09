@@ -128,6 +128,10 @@ void WifiPortalHttpRegisterRoutes(WebServer& server) {
     LogHttp(server);
     handleFirmwarePage();
   });
+  server.on("/i2c", HTTP_GET, [&server]() {
+    LogHttp(server);
+    handleI2cOledLog();
+  });
   server.on("/fw/update", HTTP_POST, [&server]() {
     LogHttp(server);
     handleFirmwareUpdate();

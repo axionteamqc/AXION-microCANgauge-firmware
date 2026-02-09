@@ -34,6 +34,8 @@ extern DataStore g_datastore_can;
 extern DataStore g_datastore_demo;
 extern volatile uint32_t g_can_rx_edge_count;
 extern portMUX_TYPE g_state_mux;
+extern uint8_t g_wire_sda_pin;
+extern uint8_t g_wire_scl_pin;
 DataStore& ActiveStore();
 extern NvsStore g_nvs;
 #if SETUP_WIZARD_ENABLED

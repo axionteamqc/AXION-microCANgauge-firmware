@@ -36,6 +36,8 @@ TwaiLink g_twai;
 Ms3Decoder g_decoder;
 DataStore g_datastore_can;
 DataStore g_datastore_demo;
+uint8_t g_wire_sda_pin = Pins::kI2cSda;
+uint8_t g_wire_scl_pin = Pins::kI2cScl;
 NvsStore g_nvs;
 #if SETUP_WIZARD_ENABLED
 SetupWizard g_setup_wizard(g_twai, g_datastore_can, g_nvs);

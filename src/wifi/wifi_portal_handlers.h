@@ -10,3 +10,4 @@ void handleLiveEvents();
 void handleFirmwarePage();
 void handleFirmwareUpdate();
 void handleFirmwareUpload();
+void handleI2cOledLog();

@@ -1,0 +1,156 @@
+<!doctype html><html><head><meta charset="utf-8"><title>CAN-GAUGE – Diff V100 vs V114 (Megasquirt-only)</title>
+<style>
+body{font-family:Segoe UI,Roboto,Arial,sans-serif; margin:24px; color:#111; line-height:1.35;}
+h1{margin-top:0;}
+code, pre{font-family:Consolas,Menlo,monospace;}
+pre{background:#f6f8fa; padding:12px; border-radius:8px; overflow:auto; border:1px solid #e5e7eb;}
+table{border-collapse:collapse; width:100%; margin:12px 0;}
+th,td{border:1px solid #e5e7eb; padding:8px; vertical-align:top;}
+th{background:#f3f4f6; text-align:left;}
+.tag{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #d1d5db; background:#f9fafb; margin-right:6px;}
+.small{font-size:13px; color:#374151;}
+hr{border:none; border-top:1px solid #e5e7eb; margin:18px 0;}
+ul{margin:6px 0 6px 22px;}
+li{margin:4px 0;}
+.kv{display:grid; grid-template-columns: 220px 1fr; gap:8px 16px; align-items:start;}
+.kv div{padding:2px 0;}
+.warn{background:#fff7ed; border:1px solid #fed7aa; padding:10px 12px; border-radius:10px;}
+.ok{background:#ecfeff; border:1px solid #a5f3fc; padding:10px 12px; border-radius:10px;}
+</style>
+</head><body>
+<h1>CAN‑GAUGE – Rapport différentiel V100‑LOCK vs V114 (scope Megasquirt‑only)</h1>
+<div class='small'>Généré localement à partir des deux archives ZIP fournies (comparaison statique du code). HALTECH et tout multi‑ECU non‑Megasquirt est explicitement hors scope pour la liste d’actions recommandées.</div>
+<hr>
+<h2>1) Méthode et faits rapides</h2>
+<div class='kv'>
+<div><span class='tag'>[CONFIRMÉ]</span>Projets comparés</div><div><code>CAN_GAUGE_V100_LOCK.zip</code> vs <code>CAN_GAUGE_V114.zip</code></div>
+<div><span class='tag'>[CONFIRMÉ]</span>Fichiers</div><div>Fichiers communs: <b>432</b> · Modifiés: <b>36</b> · Ajoutés (V114): <b>7</b> · Retirés: <b>0</b></div>
+<div><span class='tag'>[CONFIRMÉ]</span>DBC Simplified Dash</div><div>5 messages CAN, 20 signaux (<code>Megasquirt_simplified_dash_broadcast.dbc</code>)</div>
+</div>
+<div class='warn small'><b>Point critique:</b> Les “signaux/pages” supplémentaires présents dans V114 ne sont <b>pas</b> décrits dans le DBC Simplified Dash (20 signaux). Ils proviennent donc d’une autre source (autre broadcast / autre ECU) et ne doivent pas être ramenés dans le firmware Megasquirt‑only sans spécification supplémentaire.</div>
+<hr>
+<h2>2) Delta de fichiers (preuve rapide)</h2>
+<h3>2.1 Fichiers ajoutés en V114</h3>
+<ul class='small'><li><code>_tmp.txt</code></li><li><code>_tmp_test.txt</code></li><li><code>src/ecu/profiles/haltech_broadcast_profile.cpp</code></li><li><code>src/ecu/profiles/haltech_broadcast_profile.h</code></li><li><code>src/haltech_decode/haltech_decode.cpp</code></li><li><code>src/haltech_decode/haltech_decode.h</code></li><li><code>test/test_haltech_decode/test_haltech_decode.cpp</code></li></ul>
+<div class='small'>Note: les ajouts sont quasi exclusivement liés à HALTECH (<code>src/ecu/profiles/haltech*</code> et DBC) + un fichier temporaire. Donc, l’essentiel du “delta fonctionnel Megasquirt” provient de modifications de fichiers existants.</div>
+<h3>2.2 Fichiers les plus impactés (modifiés)</h3>
+<table><tr><th>Fichier</th><th>Amplitude diff (approx.)</th><th>Sous‑système</th></tr>
+<tr><td><code>src/app/app_runtime.cpp</code></td><td>2116</td><td>Runtime / boucle principale / CAN</td></tr>
+<tr><td><code>src/ui/pages.cpp</code></td><td>616</td><td>UI (pages/render/menu)</td></tr>
+<tr><td><code>src/app_state.cpp</code></td><td>424</td><td>Autre</td></tr>
+<tr><td><code>src/app_state.h</code></td><td>319</td><td>Autre</td></tr>
+<tr><td><code>src/wifi/wifi_portal.cpp</code></td><td>304</td><td>Wi‑Fi portal</td></tr>
+<tr><td><code>src/ui_render.cpp</code></td><td>214</td><td>UI (pages/render/menu)</td></tr>
+<tr><td><code>src/setup_wizard/setup_wizard_flow.cpp</code></td><td>206</td><td>Setup wizard</td></tr>
+<tr><td><code>src/app/can_runtime.cpp</code></td><td>203</td><td>Runtime / boucle principale / CAN</td></tr>
+<tr><td><code>src/drivers/oled_u8g2.cpp</code></td><td>175</td><td>Autre</td></tr>
+<tr><td><code>src/settings/nvs_store.h</code></td><td>153</td><td>NVS / settings</td></tr>
+<tr><td><code>src/settings/nvs_boot_oil.cpp</code></td><td>111</td><td>NVS / settings</td></tr>
+<tr><td><code>src/ecu/ecu_manager.cpp</code></td><td>71</td><td>ECU manager / profiles</td></tr>
+<tr><td><code>src/app/input_runtime.cpp</code></td><td>50</td><td>Runtime / boucle principale / CAN</td></tr>
+<tr><td><code>src/settings/nvs_ui.cpp</code></td><td>48</td><td>NVS / settings</td></tr>
+<tr><td><code>src/ecu/profiles/ms3_evoplus_profile.cpp</code></td><td>31</td><td>ECU manager / profiles</td></tr>
+<tr><td><code>src/ui_menu.cpp</code></td><td>30</td><td>UI (pages/render/menu)</td></tr>
+<tr><td><code>src/ecu/README_ECU_PROFILES.md</code></td><td>27</td><td>ECU manager / profiles</td></tr>
+<tr><td><code>src/ui/pages.h</code></td><td>24</td><td>UI (pages/render/menu)</td></tr>
+<tr><td><code>src/data/datastore.cpp</code></td><td>19</td><td>DataStore / contrat signaux</td></tr>
+<tr><td><code>src/data/datastore.h</code></td><td>16</td><td>DataStore / contrat signaux</td></tr>
+</table>
+<hr>
+<h2>3) Ce que V114 apporte (hors HALTECH) que V100 n’a pas</h2>
+<div class='small'>Cette section est volontairement orientée “features”, pas “diff ligne à ligne”. Chaque item est ancré dans un endroit du code.</div>
+<table><tr><th>Feature</th><th>Constat</th><th>Preuve (où dans le code)</th><th>Action recommandée pour V100</th></tr>
+<tr><td><b>Couverture UI complète des 20 signaux du DBC</b></td><td>[CONFIRMÉ] V100 décode les 20 signaux mais n’a pas de page UI pour 6 d’entre eux.</td><td>V100: <code>src/ui/pages.cpp</code> ne référence pas <code>kPw1</code>, <code>kPw2</code>, <code>kPwSeq1</code>, <code>kEgoCor1</code>, <code>kLaunchTiming</code>, <code>kTcRetard</code></td><td>À backporter (priorité haute). V114 a déjà les pages correspondantes.</td></tr>
+<tr><td><b>Ajout de pages UI supplémentaires (au‑delà du DBC)</b></td><td>[CONFIRMÉ] V114 ajoute des PageId et labels au‑delà des 20 signaux Simplified Dash.</td><td>Nouveaux PageId (V114 vs V100): <code>kPw1</code>, <code>kPw2</code>, <code>kPwSeq</code>, <code>kEgo</code>, <code>kLaunch</code>, <code>kTc</code>, <code>kCoolantPressure</code>, <code>kInj1</code>, <code>kInj2</code>, <code>kLambda1</code>, <code>kLambda2</code>, <code>kLambda3</code>, <code>kLambda4</code>, <code>kCamAngle1</code>, <code>kCamAngle2</code>, <code>kBoostTarget</code>, <code>kBaro</code>, <code>kFuelTemp</code>, <code>kOilTemp</code></td><td>Hors scope Megasquirt‑only tant qu’on reste sur Simplified Dash. Ne pas intégrer sans spec.</td></tr>
+<tr><td><b>Gestion “INVALIDE” par signal (flag + hold) + affichage &#x27;INV&#x27;</b></td><td>[CONFIRMÉ] V114 ajoute un flag invalid au DataStore + &#x27;INV&#x27; côté pages.</td><td>DataStore: <code>src/data/datastore.h/.cpp</code> (kFlagInvalid, note_invalid, invalid_until_ms). UI: <code>src/ui/pages.h/.cpp</code> (err_a='INV').</td><td>À backporter, mais avec discipline (éviter les faux positifs).</td></tr>
+<tr><td><b>Erreurs UI par page: &#x27;STAL&#x27; / &#x27;INV&#x27; + blink</b></td><td>[CONFIRMÉ] V114 étend PageRenderData (has_error, err_a/err_b, blink_flag).</td><td><code>src/ui/pages.h</code> struct PageRenderData; logique d’erreur dans <code>src/ui/pages.cpp</code>.</td><td>À backporter (priorité haute) — utile sans moniteur série.</td></tr>
+<tr><td><b>Overlay d’erreurs CAN globales plus explicites</b></td><td>[CONFIRMÉ] V114 encode des raisons: NO CAN / BAD BIT / BAD ECU / BAD CAN / NO FR.</td><td><code>src/ui_render.cpp</code> (global_err_a/b). Littéraux: </td><td>À backporter (priorité haute) — remplace &#x27;CAN ERROR&#x27; générique.</td></tr>
+<tr><td><b>États CAN plus riches (driver state + stop reason + &#x27;suspect bitrate&#x27;)</b></td><td>[CONFIRMÉ] V114 ajoute CanDriverState/CanStopReason + CanHealth::kSuspectBitrate.</td><td><code>src/app_state.h</code> (enums + champs driver_state/stop_reason, BitrateSuspect).</td><td>À backporter partiellement: utile pour auto‑recovery et pour afficher la cause.</td></tr>
+<tr><td><b>Baro calibration guidée (Wi‑Fi + état runtime)</b></td><td>[CONFIRMÉ] V114 a une page &#x27;BARO Calibration&#x27; et un état baro_cal_* dans AppState.</td><td>Wi‑Fi portal: 'BARO Calibration' présent? V100=False · V114=True. AppState: <code>baro_cal_active</code> etc.</td><td>À backporter si on garde BOOST dérivé (recommandé).</td></tr>
+<tr><td><b>Refonte config SENSE1/SENSE2 (remplace swap OilP/OilT)</b></td><td>[CONFIRMÉ] V114 remplace swap bool par label + unité RX par senseur.</td><td><code>src/app_state.h</code> struct OilConfig (voir extrait plus bas) + NVS <code>nvs_boot_oil.cpp</code> + Wi‑Fi portal JSON.</td><td>À backporter (aligné avec ton besoin &#x27;capteurs 1/2 calibrables&#x27;).</td></tr>
+<tr><td><b>Masques d’alertes/pages étendus (uint64)</b></td><td>[CONFIRMÉ] V114 passe certains masques de config de 32→64 bits (JSON et state).</td><td><code>src/app_state.h</code> (page_alert_mask_*), <code>src/wifi/wifi_portal.cpp</code> (1ULL).</td><td>Optionnel pour MS-only (26 pages ok en 32b), mais recommandé pour futur-proof.</td></tr>
+<tr><td><b>Suppression du check de plausibilité strict sur Sensors1/2</b></td><td>[CONFIRMÉ] V114 ne marque plus kSensors1/kSensors2 comme decode_oob via InRange.</td><td><code>src/app/can_runtime.cpp</code> (InRange: 'case kSensors1/kSensors2: return true;')</td><td>À intégrer (sinon fausses erreurs si capteurs custom).</td></tr>
+<tr><td><b>Améliorations UI du Setup Wizard (auto-scan)</b></td><td>[CONFIRMÉ] V114 améliore l’écran wizard (affiche IDs distincts, guidance).</td><td><code>src/setup_wizard/setup_wizard_view.cpp</code></td><td>À backporter si tu utilises encore l’auto‑scan / wizard.</td></tr>
+</table>
+<hr>
+<h2>4) Points très concrets pour ton objectif 'V100 propre + Megasquirt‑only'</h2>
+<h3>4.1 Compléter l’affichage des signaux Simplified Dash (20 signaux + pages dérivées)</h3>
+<div class='ok small'><span class='tag'>[CONFIRMÉ]</span>Le decode CAN de V100 (MS3 EVO+) inclut déjà les 6 signaux manquants; c’est uniquement l’UI qui ne les expose pas.</div>
+<ul>
+<li><b>Ajouter pages UI manquantes</b>: PW1, PW2, PWSEQ, EGOcor1, LaunchTiming, TcRetard.</li>
+<li><b>Conserver BOOST</b> (dérivé) mais le baser sur une BARO calibrée/stable (backport de la calibration guidée V114 recommandé).</li>
+<li><b>Conserver le layout OLED V100</b> (polices/coordonnées) et greffer uniquement les nouvelles pages dans la table/pages existante.</li>
+</ul>
+<h3>4.2 Remplacer OilP/OilT par SENSE1/SENSE2 entièrement configurables</h3>
+<div class='small'>Extrait struct V100 vs V114 (preuve de ce qui change réellement):</div>
+<table><tr><th>V100 (actuel)</th><th>V114 (approche plus générique)</th></tr>
+<tr><td><pre>struct OilConfig {
+    enum class Mode : uint8_t { kOff = 0, kRaw = 1 };
+    Mode mode = Mode::kOff;
+    bool swap = false;
+    char pressure_label[8] = &quot;OilP&quot;;
+    char temp_label[8] = &quot;OilT&quot;;
+  } </pre></td><td><pre>struct OilConfig {
+
+    enum class Mode : uint8_t { kOff = 0, kRaw = 1 };
+
+    enum class SenseUnit : uint8_t { kKpa = 0, kPsi, kDegC, kDegF, kVolt };
+
+    Mode mode = Mode::kOff;
+
+
+    char pressure_label[8] = &quot;SENSE1&quot;;
+
+    char temp_label[8] = &quot;SENSE2&quot;;
+
+    SenseUnit sense1_rx_unit = SenseUnit::kKpa;
+
+    SenseUnit sense2_rx_unit = SenseUnit::kDegC;
+
+  } </pre></td></tr></table>
+<ul>
+<li><b>Action V100</b>: adopter la structure V114 (label + rx_unit) et supprimer la logique de swap.</li>
+<li><b>Ton besoin 'calibrable'</b>: V114 apporte l’unité RX (F/C, kPa/psi). La calibration (slope/offset) reste à implémenter (pas présente dans ces deux versions de manière complète).</li>
+</ul>
+<h3>4.3 Remplacer le diagnostic “spaghetti” par des signaux de santé structurés et visibles</h3>
+<ul>
+<li><b>Par page</b>: afficher <code>STAL</code> si stale, <code>INV</code> si invalid. (V114 le fait via PageRenderData.)</li>
+<li><b>Global</b>: afficher un overlay court et stable (2×4 chars) basé sur les états CAN: <code>NO CAN</code>, <code>BAD BIT</code>, <code>BAD ECU</code>, <code>BAD CAN</code>, <code>NO FR</code>.</li>
+<li><b>Auto‑recovery</b>: v114 prépare le terrain via <code>CanDriverState</code>/<code>CanStopReason</code>. Pour ton usage sans Serial, l’auto‑recovery doit être observable (compteur + raison affichée) et bornée (pas de boucle infinie muette).</li>
+</ul>
+<h3>4.4 JSON import/export: tout exporter/importer (single source of truth)</h3>
+<ul>
+<li><span class='tag'>[CONFIRMÉ]</span>V100 exporte déjà un JSON de config; V114 l’étend (sense1/sense2 + masques 64‑bit).</li>
+<li>Action: sur V100, ajouter les nouveaux champs (sense1/2, pages supplémentaires, masques étendus si adoptés) et garantir la <b>symétrie</b> import/export.</li>
+</ul>
+<hr>
+<h2>5) Plan de travail recommandé (backport ciblé, pas “rewrite”)</h2>
+<div class='small'>But: garder le firmware stable (OLED/UI V100), ajouter seulement les features prouvées utiles, et réduire la dette technique.</div>
+<ol>
+<li>Créer une branche &#x27;v100-clean&#x27; (baseline flashable), geler le layout OLED et la navigation (bouton) tels quels.</li>
+<li>Backporter depuis V114: PageRenderData (err_a/err_b/blink/has_error) + logique &#x27;INV/STAL&#x27; par page, sans toucher au layout.</li>
+<li>Ajouter les 6 pages UI manquantes (PW1/PW2/PWSEQ/EGO/LAUNCH/TC) en copiant la logique V114 mais en conservant le rendu V100.</li>
+<li>Backporter DataStore::note_invalid + kFlagInvalid, et relier InRange→note_invalid (au lieu de drop silencieux) avec temporisation courte (ex: 1–2s).</li>
+<li>Implémenter/Backporter overlay d’erreur CAN global (NO CAN / BAD BIT / BAD ECU / BAD CAN / NO FR) + priorités d’affichage.</li>
+<li>Backporter la calibration BARO guidée (Wi‑Fi) + état runtime; faire que BOOST dépend d’une BARO &#x27;acquise&#x27; (sinon &#x27;NOTSET&#x27; ou similaire).</li>
+<li>Refondre OilP/OilT en SENSE1/SENSE2: labels + unité RX + unité display; désactiver par défaut; intégrer dans Wi‑Fi portal + JSON.</li>
+<li>Revoir le pipeline d’alertes (inversion + exclamation blink) pour inclure les nouvelles pages, et faire une table d’unités/plausibilité cohérente.</li>
+<li>Nettoyage: supprimer / #ifdef tous les diagnostics temporaires, garder seulement: compteurs CAN, dernier RX ms, santé CAN, et export CSV/JSON.</li>
+<li>Outillage: activer un format automatique (clang-format + PlatformIO &#x27;format on save&#x27; si possible) et un check CI local (pio run + pio check/cppcheck).</li>
+</ol>
+<hr>
+<h2>6) Outillage “style / clean code” (C++ firmware + Python simulator)</h2>
+<ul>
+<li><span class='tag'>[CONFIRMÉ]</span>Le dépôt contient déjà <code>.clang-format</code> et <code>.editorconfig</code> (présents dans V100/V114). Tu peux donc standardiser le formatage sans débattre.</li>
+<li><span class='tag'>[TRÈS PROBABLE]</span>Pour firmware: <b>clang-format</b> (format), <b>clang-tidy</b> ou <b>cppcheck</b> (lint), et une tâche VS/PlatformIO 'format + build' à chaque étape.</li>
+<li><span class='tag'>[TRÈS PROBABLE]</span>Pour simulateur Python: <b>ruff</b> (lint+format), éventuellement <b>mypy</b> (types) et <b>pytest</b> (tests). Objectif: zéro débat sur le style.</li>
+</ul>
+<hr>
+<h2>7) Ce qu’il me manque encore (bloquants éventuels)</h2>
+<div class='small'>Pour le diff V100 vs V114, rien de bloquant. Pour l’exécution du plan ci‑dessus, voici les rares points où je ne peux pas “deviner” sans risque:</div>
+<ul>
+<li><span class='tag'>[HYPOTHÈSE]</span>Durée exacte du hold 'INV' (invalid) et 'STAL' (stale) que tu veux en UX (ex: 500 ms vs 2 s). Je peux proposer des valeurs, mais ce n’est pas un fait.</li>
+<li><span class='tag'>[HYPOTHÈSE]</span>Comportement exact en recovery BUS‑OFF: délais, nombre de retries, et si on relance le wizard après N échecs.</li>
+<li><span class='tag'>[TRÈS PROBABLE]</span>Liste définitive des pages dérivées (au‑delà de BOOST) et leur priorité. Tu as déjà validé BOOST; le reste dépend de ton UX.</li>
+</ul>
+</body></html>

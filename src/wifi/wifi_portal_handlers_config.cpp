@@ -8,6 +8,7 @@
 #include "app/app_sleep.h"
 #include "app/app_ui_snapshot.h"
 #include "app/app_runtime.h"
+#include "app/i2c_oled_log.h"
 #include "app_state.h"
 #include "boot/boot_strings.h"
 #include "config/factory_config.h"
@@ -344,6 +345,110 @@ void handleRoot() {
   if (kEnableVerboseSerialLogs && (dt_ms > 500 || heap_after < 25000)) {
     LOGW("[HTTP_DIAG] WARN: slow render or low heap\r\n");
   }
+}
+
+void handleI2cOledLog() {
+  WebServer& server = WifiPortalServer();
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "text/html", "");
+  PortalWriter send(server);
+  renderHtmlHead(send);
+  send("<h1>I2C / OLED Logs</h1>");
+
+  AppUiSnapshot ui{};
+  GetAppUiSnapshot(ui);
+  send.SendFmt("<p>OLED1: %s | OLED2: %s</p>",
+               ui.oled_primary_ready ? "ready" : "missing",
+               ui.oled_secondary_ready ? "ready" : "missing");
+  const uint32_t oled1_hz = g_oled_primary.busClockHz();
+  const uint32_t oled2_hz = g_oled_secondary.busClockHz();
+  send.SendFmt("<p>Bus clocks: OLED1 %lu Hz | OLED2 %lu Hz</p>",
+               static_cast<unsigned long>(oled1_hz),
+               static_cast<unsigned long>(oled2_hz));
+
+  const uint16_t count = I2cOledLogCount();
+  send.SendFmt("<p>RAM log entries: %u</p>", static_cast<unsigned>(count));
+
+  I2cOledLogEntry entries[64];
+  const uint16_t n = I2cOledLogCopy(entries, 64);
+  send("<div class='table-wrap'><table><tr>"
+       "<th>t(ms)</th><th>OLED</th><th>action</th><th>ok</th>"
+       "<th>SDA</th><th>SCL</th></tr>");
+  for (uint16_t i = 0; i < n; ++i) {
+    const I2cOledLogEntry& e = entries[i];
+    char sda_buf[8];
+    char scl_buf[8];
+    if (e.sda == 0xFF) {
+      snprintf(sda_buf, sizeof(sda_buf), "?");
+    } else {
+      snprintf(sda_buf, sizeof(sda_buf), "%u", static_cast<unsigned>(e.sda));
+    }
+    if (e.scl == 0xFF) {
+      snprintf(scl_buf, sizeof(scl_buf), "?");
+    } else {
+      snprintf(scl_buf, sizeof(scl_buf), "%u", static_cast<unsigned>(e.scl));
+    }
+    send("<tr><td>");
+    send.SendFmt("%lu", static_cast<unsigned long>(e.ms));
+    send("</td><td>");
+    send.SendFmt("%u", static_cast<unsigned>(e.oled));
+    send("</td><td>");
+    send(I2cOledActionStr(static_cast<I2cOledAction>(e.action)));
+    send("</td><td>");
+    send(e.ok ? "ok" : "fail");
+    send("</td><td>");
+    send(sda_buf);
+    send("</td><td>");
+    send(scl_buf);
+    send("</td></tr>");
+  }
+  send("</table></div>");
+
+  I2cOledLogSnapshot snap{};
+  if (I2cOledLogLoadSnapshot(snap)) {
+    send("<h2>Saved Snapshot (NVS)</h2>");
+    send.SendFmt("<p>Saved at %lu ms, entries: %u</p>",
+                 static_cast<unsigned long>(snap.saved_ms),
+                 static_cast<unsigned>(snap.count));
+    send("<div class='table-wrap'><table><tr>"
+         "<th>t(ms)</th><th>OLED</th><th>action</th><th>ok</th>"
+         "<th>SDA</th><th>SCL</th></tr>");
+    for (uint16_t i = 0; i < snap.count && i < 64; ++i) {
+      const I2cOledLogEntry& e = snap.entries[i];
+      char sda_buf[8];
+      char scl_buf[8];
+      if (e.sda == 0xFF) {
+        snprintf(sda_buf, sizeof(sda_buf), "?");
+      } else {
+        snprintf(sda_buf, sizeof(sda_buf), "%u", static_cast<unsigned>(e.sda));
+      }
+      if (e.scl == 0xFF) {
+        snprintf(scl_buf, sizeof(scl_buf), "?");
+      } else {
+        snprintf(scl_buf, sizeof(scl_buf), "%u", static_cast<unsigned>(e.scl));
+      }
+      send("<tr><td>");
+      send.SendFmt("%lu", static_cast<unsigned long>(e.ms));
+      send("</td><td>");
+      send.SendFmt("%u", static_cast<unsigned>(e.oled));
+      send("</td><td>");
+      send(I2cOledActionStr(static_cast<I2cOledAction>(e.action)));
+      send("</td><td>");
+      send(e.ok ? "ok" : "fail");
+      send("</td><td>");
+      send(sda_buf);
+      send("</td><td>");
+      send(scl_buf);
+      send("</td></tr>");
+    }
+    send("</table></div>");
+  } else {
+    send("<p>No snapshot saved in NVS.</p>");
+  }
+
+  send("<p><a href='/'>Back to portal</a></p>");
+  renderHtmlFooter(send);
+  server.sendContent("");
 }
 
 void handleRedirect() {

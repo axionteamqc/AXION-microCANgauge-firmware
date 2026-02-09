@@ -27,13 +27,20 @@ If you use **Advanced** mode and change base IDs / layout, your frames will not 
 
 
 ## Media / gallery
-A few **reference renders** (see `media/README.md` for the full set):
+A few quick reference images (renders + PCB review photos). Full set in `media/README.md`.
 
 <p float="left">
   <img src="media/renders/enclosure_front.png" width="260" />
+  <img src="media/renders/enclosure_top_off.png" width="260" />
+  <img src="hardware_review/5_CAN_V3_PCB_TOP_03.02.2026.png" width="260" />
+</p>
+
+<p float="left">
   <img src="media/renders/gauge_module_render.png" width="260" />
   <img src="media/renders/oled_128x32_front.png" width="260" />
+  <img src="hardware_review/6_CAN_V3_PCB_BOTTOM_03.02.2026.png" width="260" />
 </p>
+
 
 ## Build / flash
 **Tooling:** PlatformIO.

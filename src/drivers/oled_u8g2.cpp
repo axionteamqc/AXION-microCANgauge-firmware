@@ -1,5 +1,7 @@
 #include "drivers/oled_u8g2.h"
 
+#include "app/i2c_oled_log.h"
+
 #include <Arduino.h>
 #include <Wire.h>
 #include <cstring>
@@ -9,6 +11,104 @@
 
 namespace {
 constexpr uint8_t kI2cAddress = 0x3C << 1;  // U8G2 uses 8-bit addr
+constexpr uint8_t kI2cAddr7Primary = 0x3C;
+constexpr uint8_t kI2cAddr7Alt = 0x3D;
+
+static uint32_t g_sw_i2c_delay_us = 5;
+
+inline uint32_t ClampDelayUs(uint32_t us) {
+  if (us == 0) return 1;
+  if (us > 1000U) return 1000U;
+  return us;
+}
+
+inline uint32_t CalcSwDelayUs(uint32_t bus_hz) {
+  if (bus_hz == 0) return g_sw_i2c_delay_us;
+  const uint32_t half_us = 500000UL / bus_hz;
+  return ClampDelayUs(half_us);
+}
+
+inline void I2cDelayShort() { delayMicroseconds(GetSwI2cDelayUs()); }
+
+inline void I2cSclLow(uint8_t scl) {
+  pinMode(scl, OUTPUT);
+  digitalWrite(scl, LOW);
+}
+
+inline void I2cSclRelease(uint8_t scl) {
+  pinMode(scl, INPUT_PULLUP);
+}
+
+inline void I2cSdaLow(uint8_t sda) {
+  pinMode(sda, OUTPUT);
+  digitalWrite(sda, LOW);
+}
+
+inline void I2cSdaRelease(uint8_t sda) {
+  pinMode(sda, INPUT_PULLUP);
+}
+
+inline bool I2cSdaRead(uint8_t sda) {
+  pinMode(sda, INPUT_PULLUP);
+  return digitalRead(sda) != 0;
+}
+
+inline void I2cStart(uint8_t sda, uint8_t scl) {
+  I2cSdaRelease(sda);
+  I2cSclRelease(scl);
+  I2cDelayShort();
+  I2cSdaLow(sda);
+  I2cDelayShort();
+  I2cSclLow(scl);
+  I2cDelayShort();
+}
+
+inline void I2cStop(uint8_t sda, uint8_t scl) {
+  I2cSdaLow(sda);
+  I2cDelayShort();
+  I2cSclRelease(scl);
+  I2cDelayShort();
+  I2cSdaRelease(sda);
+  I2cDelayShort();
+}
+
+inline bool I2cWriteByte(uint8_t sda, uint8_t scl, uint8_t data) {
+  for (uint8_t i = 0; i < 8; ++i) {
+    if (data & 0x80) {
+      I2cSdaRelease(sda);
+    } else {
+      I2cSdaLow(sda);
+    }
+    I2cDelayShort();
+    I2cSclRelease(scl);
+    I2cDelayShort();
+    I2cSclLow(scl);
+    I2cDelayShort();
+    data <<= 1;
+  }
+  I2cSdaRelease(sda);
+  I2cDelayShort();
+  I2cSclRelease(scl);
+  I2cDelayShort();
+  const bool nack = I2cSdaRead(sda);
+  I2cSclLow(scl);
+  I2cDelayShort();
+  return !nack;
+}
+
+bool I2cSendCommandSw(uint8_t sda, uint8_t scl, uint8_t addr7, uint8_t cmd) {
+  bool ack = false;
+  I2cStart(sda, scl);
+  ack = I2cWriteByte(sda, scl, static_cast<uint8_t>(addr7 << 1));
+  if (ack) {
+    ack = I2cWriteByte(sda, scl, 0x00);  // control byte: command
+  }
+  if (ack) {
+    ack = I2cWriteByte(sda, scl, cmd);
+  }
+  I2cStop(sda, scl);
+  return ack;
+}
 
 // Draw an alert triangle with an exclamation point. x_right is the right edge
 // of the icon; y_top is the top; height controls size. draw_black forces
@@ -55,6 +155,7 @@ OledU8g2::OledU8g2(Bus bus, uint8_t clock_pin, uint8_t data_pin,
       data_pin_(data_pin),
       reset_pin_(reset_pin),
       ready_(false),
+      bus_hz_(0),
       u8g2_(nullptr),
       invert_on_(false) {}
 
@@ -68,8 +169,14 @@ void OledU8g2::destroyDisplay() {
 bool OledU8g2::begin(uint32_t bus_hz, Profile profile, bool probe_hw) {
   ready_ = false;
   destroyDisplay();
-  if (probe_hw && !probeHwAddress()) {
+  if (bus_ == Bus::kSw && bus_hz > 0) {
+    SetSwI2cDelayUs(CalcSwDelayUs(bus_hz));
+  }
+  if (probe_hw && !probeBusAddress()) {
     return false;
+  }
+  if (probe_hw) {
+    (void)sendRawCommand(0xAE);  // display off early to reduce power-on noise
   }
 
   createDisplay(profile);
@@ -78,6 +185,7 @@ bool OledU8g2::begin(uint32_t bus_hz, Profile profile, bool probe_hw) {
   }
 
   u8g2_->setI2CAddress(kI2cAddress);
+  bus_hz_ = bus_hz;
   if (bus_hz > 0) {
     u8g2_->setBusClock(bus_hz);
   }
@@ -92,14 +200,21 @@ bool OledU8g2::begin(uint32_t bus_hz, Profile profile, bool probe_hw) {
 bool OledU8g2::begin64(uint32_t bus_hz, bool probe_hw) {
   ready_ = false;
   destroyDisplay();
-  if (probe_hw && !probeHwAddress()) {
+  if (bus_ == Bus::kSw && bus_hz > 0) {
+    SetSwI2cDelayUs(CalcSwDelayUs(bus_hz));
+  }
+  if (probe_hw && !probeBusAddress()) {
     return false;
+  }
+  if (probe_hw) {
+    (void)sendRawCommand(0xAE);  // display off early to reduce power-on noise
   }
   createDisplay64();
   if (!u8g2_) {
     return false;
   }
   u8g2_->setI2CAddress(kI2cAddress);
+  bus_hz_ = bus_hz;
   if (bus_hz > 0) {
     u8g2_->setBusClock(bus_hz);
   }
@@ -180,6 +295,80 @@ bool OledU8g2::probeHwAddress() {
   }
   Wire.beginTransmission(0x3C);
   return Wire.endTransmission() == 0;
+}
+
+bool OledU8g2::probeSwAddress() {
+  if (bus_ != Bus::kSw) {
+    return true;
+  }
+  const uint8_t sda = data_pin_;
+  const uint8_t scl = clock_pin_;
+  I2cSdaRelease(sda);
+  I2cSclRelease(scl);
+  I2cDelayShort();
+  bool ack = false;
+  I2cStart(sda, scl);
+  ack = I2cWriteByte(sda, scl, static_cast<uint8_t>(kI2cAddr7Primary << 1));
+  I2cStop(sda, scl);
+  if (!ack) {
+    I2cStart(sda, scl);
+    ack = I2cWriteByte(sda, scl, static_cast<uint8_t>(kI2cAddr7Alt << 1));
+    I2cStop(sda, scl);
+  }
+  I2cSdaRelease(sda);
+  I2cSclRelease(scl);
+  return ack;
+}
+
+bool OledU8g2::probeBusAddress() {
+  return (bus_ == Bus::kHw) ? probeHwAddress() : probeSwAddress();
+}
+
+bool OledU8g2::probeAddress() {
+  const bool ok = probeBusAddress();
+  const uint8_t oled_id = (bus_ == Bus::kHw) ? 1 : 2;
+  I2cOledLogEvent(oled_id, I2cOledAction::kProbe, ok, data_pin_, clock_pin_);
+  return ok;
+}
+
+bool OledU8g2::sendRawCommand(uint8_t cmd) {
+  if (bus_ == Bus::kHw) {
+    Wire.beginTransmission(kI2cAddr7Primary);
+    Wire.write(0x00);
+    Wire.write(cmd);
+    if (Wire.endTransmission() == 0) {
+      return true;
+    }
+    Wire.beginTransmission(kI2cAddr7Alt);
+    Wire.write(0x00);
+    Wire.write(cmd);
+    return Wire.endTransmission() == 0;
+  }
+  const uint8_t sda = data_pin_;
+  const uint8_t scl = clock_pin_;
+  if (I2cSendCommandSw(sda, scl, kI2cAddr7Primary, cmd)) {
+    return true;
+  }
+  return I2cSendCommandSw(sda, scl, kI2cAddr7Alt, cmd);
+}
+
+void OledU8g2::setBusClockHz(uint32_t bus_hz) {
+  bus_hz_ = bus_hz;
+  if (bus_ == Bus::kSw && bus_hz > 0) {
+    SetSwI2cDelayUs(CalcSwDelayUs(bus_hz));
+  }
+  if (bus_ == Bus::kHw) {
+    Wire.setClock(bus_hz);
+  }
+  if (u8g2_ && bus_hz > 0) {
+    u8g2_->setBusClock(bus_hz);
+  }
+}
+
+uint32_t GetSwI2cDelayUs() { return g_sw_i2c_delay_us; }
+
+void SetSwI2cDelayUs(uint32_t delay_us) {
+  g_sw_i2c_delay_us = ClampDelayUs(delay_us);
 }
 
 void OledU8g2::renderMetric(const char* label, const char* value_str,

@@ -1,12 +1,14 @@
 #include <Arduino.h>
 #include <cmath>
 #include <WiFi.h>
+#include <Wire.h>
 #include <esp_heap_caps.h>
 
 #include "alerts/alerts_engine.h"
 #include "app/app_globals.h"
 #include "app/app_runtime.h"
 #include "app/app_sleep.h"
+#include "app/i2c_oled_log.h"
 #include "app_config.h"
 #include "app_state.h"
 #include "app/baro_auto.h"
@@ -39,6 +41,57 @@ extern bool g_auto_setup_pending;
 extern bool g_i2c_seen;
 extern uint8_t g_i2c_scan_attempts;
 extern uint32_t g_last_i2c_scan_ms;
+
+static bool ProbeOled1Ack() {
+  if (g_wire_sda_pin != Pins::kI2cSda || g_wire_scl_pin != Pins::kI2cScl) {
+    LOGW("Wire not on OLED1 bus, rebinding\r\n");
+    Wire.begin(Pins::kI2cSda, Pins::kI2cScl);
+    g_wire_sda_pin = Pins::kI2cSda;
+    g_wire_scl_pin = Pins::kI2cScl;
+    uint32_t bus_hz = g_oled_primary.busClockHz();
+    if (bus_hz == 0) {
+      bus_hz = AppConfig::kBootI2cClockHz;
+    }
+    Wire.setClock(bus_hz);
+    Wire.setTimeOut(20);
+  }
+  Wire.beginTransmission(0x3C);
+  if (Wire.endTransmission() == 0) return true;
+  Wire.beginTransmission(0x3D);
+  return Wire.endTransmission() == 0;
+}
+
+static bool MaybeResetWireOled1(uint32_t now_ms, uint32_t bus_hz,
+                                bool log_verbose) {
+  static uint32_t reset_window_ms = 0;
+  static uint8_t reset_count = 0;
+  if (reset_window_ms == 0 || (now_ms - reset_window_ms) > 60000U) {
+    reset_window_ms = now_ms;
+    reset_count = 0;
+  }
+  if (reset_count >= 3) {
+    if (log_verbose) {
+      LOGW("OLED1 I2C hard reset rate-limited\r\n");
+    }
+    I2cOledLogEvent(1, I2cOledAction::kWireReset, false, Pins::kI2cSda,
+                    Pins::kI2cScl);
+    return false;
+  }
+  ++reset_count;
+  if (log_verbose) {
+    LOGW("OLED1 I2C hard reset (Wire) #%u\r\n",
+         static_cast<unsigned>(reset_count));
+  }
+  I2cOledLogEvent(1, I2cOledAction::kWireReset, true, Pins::kI2cSda,
+                  Pins::kI2cScl);
+  Wire.end();
+  Wire.begin(Pins::kI2cSda, Pins::kI2cScl);
+  g_wire_sda_pin = Pins::kI2cSda;
+  g_wire_scl_pin = Pins::kI2cScl;
+  Wire.setClock(bus_hz);
+  Wire.setTimeOut(20);
+  return true;
+}
 
 static void DemoTick(AppState& state, uint32_t now_ms) {
   state.mock_data.update(now_ms);
@@ -171,6 +224,14 @@ void AppLoopTick() {
   static bool prev_pressed = false;
   static bool prev_demo = true;
   static bool auto_wifi_triggered = false;
+  static uint32_t last_oled_probe_ms = 0;
+  static uint8_t oled_watchdog_backoff_idx = 0;
+  static size_t oled_retry_idx = 0;
+  static bool oled_retry_done = false;
+  static uint32_t last_oled_retry_ms = 0;
+  static bool oled_missing_logged = false;
+  static bool i2c_clock_raised = false;
+  static uint32_t last_i2c_log_snapshot_ms = 0;
 
   WifiDiagTick(now_ms);
 
@@ -200,11 +261,370 @@ void AppLoopTick() {
     }
   }
 
+  // Short boot-only OLED bring-up retries (non-blocking, 0..3s window).
+  {
+    uint32_t boot_ms = 0;
+    portENTER_CRITICAL(&g_state_mux);
+    boot_ms = g_state.boot_ms;
+    portEXIT_CRITICAL(&g_state_mux);
+    if (!oled_retry_done && boot_ms != 0) {
+      const uint32_t elapsed = now_ms - boot_ms;
+      const uint32_t kRetryOffsetsMs[] = {200, 500, 1000, 2000, 3000};
+      const size_t kRetryCount = sizeof(kRetryOffsetsMs) / sizeof(kRetryOffsetsMs[0]);
+      const bool safe_i2c = AppConfig::kSafeCableI2cEnabled;
+      const uint32_t oled1_boot_hz = AppConfig::kBootI2cClockHz;
+      const uint32_t oled2_boot_hz =
+          safe_i2c ? AppConfig::kSafeCableBootI2cHz
+                   : AppConfig::kI2c2FrequencyHz;
+      const uint32_t oled1_runtime_hz =
+          safe_i2c ? AppConfig::kSafeCableRuntimeI2cHz
+                   : AppConfig::kI2cFrequencyHz;
+      const uint32_t oled2_runtime_hz =
+          safe_i2c ? AppConfig::kSafeCableRuntimeI2cHz
+                   : AppConfig::kI2c2FrequencyHz;
+      if (elapsed <= 5000U && !i2c_clock_raised) {
+        Wire.setClock(oled1_boot_hz);
+      }
+      const bool retry_due =
+          (oled_retry_idx < kRetryCount &&
+           elapsed >= kRetryOffsetsMs[oled_retry_idx]) ||
+          (oled_retry_idx >= kRetryCount &&
+           (now_ms - last_oled_retry_ms) >= 1000U);
+      if (retry_due) {
+        last_oled_retry_ms = now_ms;
+        bool primary_ready = false;
+        bool secondary_ready = false;
+        DisplayTopology topo = DisplayTopology::kSmallOnly;
+        bool flip0 = false;
+        bool flip1 = false;
+        portENTER_CRITICAL(&g_state_mux);
+        primary_ready = g_state.oled_primary_ready;
+        secondary_ready = g_state.oled_secondary_ready;
+        topo = g_state.display_topology;
+        flip0 = g_state.screen_cfg[0].flip_180;
+        flip1 = g_state.screen_cfg[1].flip_180;
+        portEXIT_CRITICAL(&g_state_mux);
+
+        if (kEnableVerboseSerialLogs) {
+          LOGI("OLED late retry %u/%u (t=%lums)\r\n",
+               static_cast<unsigned>(oled_retry_idx + 1),
+               static_cast<unsigned>(kRetryCount),
+               static_cast<unsigned long>(elapsed));
+        }
+
+        if (!primary_ready) {
+          const bool recovered =
+              RecoverI2cBus(Pins::kI2cSda, Pins::kI2cScl, "OLED1",
+                            kEnableVerboseSerialLogs);
+          bool ack = recovered && ProbeOled1Ack();
+          if (!ack) {
+            (void)RecoverI2cBus(Pins::kI2cSda, Pins::kI2cScl, "OLED1",
+                                kEnableVerboseSerialLogs, true);
+            ack = ProbeOled1Ack();
+          }
+          if (!ack && MaybeResetWireOled1(now_ms, oled1_boot_hz,
+                                          kEnableVerboseSerialLogs)) {
+            const bool ack_after_reset = ProbeOled1Ack();
+            if (kEnableVerboseSerialLogs) {
+              LOGI("OLED1 ACK after Wire reset %s\r\n",
+                   ack_after_reset ? "ok" : "fail");
+            }
+            ack = ack_after_reset;
+          }
+          I2cOledLogEvent(1, I2cOledAction::kProbe, ack, Pins::kI2cSda,
+                          Pins::kI2cScl);
+          if (kEnableVerboseSerialLogs) {
+            LOGI("OLED1 ACK %s\r\n", ack ? "ok" : "fail");
+          }
+          bool ok = false;
+          if (ack) {
+            if (topo == DisplayTopology::kLargeOnly ||
+                topo == DisplayTopology::kLargePlusSmall) {
+              ok = initAndTestDisplay64(g_oled_primary, true, oled1_boot_hz);
+            } else {
+              ok = initAndTestDisplay(g_oled_primary, true, oled1_boot_hz);
+            }
+          }
+          if (ok) {
+            g_oled_primary.setRotation(flip0);
+            g_oled_primary.clearDisplay();
+            const bool ack_after = ProbeOled1Ack();
+            I2cOledLogEvent(1, I2cOledAction::kClear, ack_after, Pins::kI2cSda,
+                            Pins::kI2cScl);
+            if (kEnableVerboseSerialLogs) {
+              LOGI("OLED1 re-ACK %s\r\n", ack_after ? "ok" : "fail");
+            }
+            ok = ack_after;
+            if (ok) {
+              g_oled_primary.sendRawCommand(0xAF);
+            }
+          }
+          portENTER_CRITICAL(&g_state_mux);
+          g_state.oled_primary_ready = ok;
+          portEXIT_CRITICAL(&g_state_mux);
+        }
+
+        if (!secondary_ready) {
+          const bool recovered =
+              RecoverI2cBus(Pins::kI2c2Sda, Pins::kI2c2Scl, "OLED2",
+                            kEnableVerboseSerialLogs);
+          g_oled_secondary.setBusClockHz(oled2_boot_hz);
+          bool ack = recovered && g_oled_secondary.probeAddress();
+          if (!ack) {
+            (void)RecoverI2cBus(Pins::kI2c2Sda, Pins::kI2c2Scl, "OLED2",
+                                kEnableVerboseSerialLogs, true);
+            ack = g_oled_secondary.probeAddress();
+          }
+          if (kEnableVerboseSerialLogs) {
+            LOGI("OLED2 ACK %s\r\n", ack ? "ok" : "fail");
+          }
+          bool ok = false;
+          if (ack) {
+            ok = initAndTestDisplay(g_oled_secondary, false, oled2_boot_hz);
+          }
+          if (ok) {
+            g_oled_secondary.setRotation(flip1);
+            g_oled_secondary.clearDisplay();
+            const bool ack_after = g_oled_secondary.probeAddress();
+            I2cOledLogEvent(2, I2cOledAction::kClear, ack_after,
+                            Pins::kI2c2Sda, Pins::kI2c2Scl);
+            if (kEnableVerboseSerialLogs) {
+              LOGI("OLED2 re-ACK %s\r\n", ack_after ? "ok" : "fail");
+            }
+            ok = ack_after;
+            if (ok) {
+              g_oled_secondary.sendRawCommand(0xAF);
+            }
+          }
+          portENTER_CRITICAL(&g_state_mux);
+          g_state.oled_secondary_ready = ok;
+          portEXIT_CRITICAL(&g_state_mux);
+        }
+
+        if (oled_retry_idx < kRetryCount) {
+          ++oled_retry_idx;
+        }
+        bool primary_ready_final = false;
+        bool secondary_ready_final = false;
+        portENTER_CRITICAL(&g_state_mux);
+        primary_ready_final = g_state.oled_primary_ready;
+        secondary_ready_final = g_state.oled_secondary_ready;
+        portEXIT_CRITICAL(&g_state_mux);
+        if (primary_ready_final && secondary_ready_final) {
+          oled_retry_done = true;
+        } else if (elapsed >= 3000U && !oled_missing_logged) {
+          if (kEnableVerboseSerialLogs) {
+            if (!primary_ready_final) {
+              LOGW("OLED1 absent after late retries\r\n");
+            }
+            if (!secondary_ready_final) {
+              LOGW("OLED2 absent after late retries\r\n");
+            }
+          }
+          oled_missing_logged = true;
+        }
+      }
+      if (!i2c_clock_raised) {
+        bool primary_ready = false;
+        bool secondary_ready = false;
+        portENTER_CRITICAL(&g_state_mux);
+        primary_ready = g_state.oled_primary_ready;
+        secondary_ready = g_state.oled_secondary_ready;
+        portEXIT_CRITICAL(&g_state_mux);
+        if (primary_ready && secondary_ready &&
+            ((oled1_runtime_hz > oled1_boot_hz) ||
+             (oled2_runtime_hz != oled2_boot_hz))) {
+          const bool ack1 = ProbeOled1Ack();
+          const bool ack2 = g_oled_secondary.probeAddress();
+          if (ack1 && ack2) {
+            g_oled_primary.setBusClockHz(oled1_runtime_hz);
+            g_oled_secondary.setBusClockHz(oled2_runtime_hz);
+            i2c_clock_raised = true;
+            LOGI("OLED1 bus clock = %lu Hz (runtime)\r\n",
+                 static_cast<unsigned long>(oled1_runtime_hz));
+            LOGI("OLED2 bus clock = %lu Hz (runtime)\r\n",
+                 static_cast<unsigned long>(oled2_runtime_hz));
+          }
+        }
+      }
+    }
+  }
+
+  // Boot OLED watchdog: re-probe and retry init (0..60s) with backoff.
+  {
+    uint32_t boot_ms = 0;
+    portENTER_CRITICAL(&g_state_mux);
+    boot_ms = g_state.boot_ms;
+    portEXIT_CRITICAL(&g_state_mux);
+    if (boot_ms != 0 && (now_ms - boot_ms) <= 60000U) {
+      const uint32_t watchdog_slow_hz = AppConfig::kSafeCableBootI2cHz;
+      const uint32_t watchdog_fast_hz = AppConfig::kSafeCableRuntimeI2cHz;
+      const uint32_t kBackoffMs[] = {1000U, 2000U, 5000U};
+      const size_t kBackoffCount = sizeof(kBackoffMs) / sizeof(kBackoffMs[0]);
+      const uint32_t due_ms =
+          (last_oled_probe_ms == 0) ? now_ms
+                                    : (last_oled_probe_ms +
+                                       kBackoffMs[oled_watchdog_backoff_idx]);
+      if (now_ms >= due_ms) {
+        last_oled_probe_ms = now_ms;
+        bool primary_ready = false;
+        bool secondary_ready = false;
+        DisplayTopology topo = DisplayTopology::kSmallOnly;
+        bool flip0 = false;
+        bool flip1 = false;
+        portENTER_CRITICAL(&g_state_mux);
+        primary_ready = g_state.oled_primary_ready;
+        secondary_ready = g_state.oled_secondary_ready;
+        topo = g_state.display_topology;
+        flip0 = g_state.screen_cfg[0].flip_180;
+        flip1 = g_state.screen_cfg[1].flip_180;
+        portEXIT_CRITICAL(&g_state_mux);
+
+        bool any_attempt = false;
+        bool any_success = false;
+
+        const bool primary_ack = primary_ready ? ProbeOled1Ack() : false;
+        if (!primary_ready || !primary_ack) {
+          any_attempt = true;
+          g_oled_primary.setBusClockHz(watchdog_slow_hz);
+          RecoverI2cBus(Pins::kI2cSda, Pins::kI2cScl, "OLED1",
+                        kEnableVerboseSerialLogs, true);
+          bool ok = false;
+          bool ack = ProbeOled1Ack();
+          if (!ack && MaybeResetWireOled1(now_ms, watchdog_slow_hz,
+                                          kEnableVerboseSerialLogs)) {
+            const bool ack_after_reset = ProbeOled1Ack();
+            if (kEnableVerboseSerialLogs) {
+              LOGI("OLED1 ACK after Wire reset %s\r\n",
+                   ack_after_reset ? "ok" : "fail");
+            }
+            ack = ack_after_reset;
+          }
+          I2cOledLogEvent(1, I2cOledAction::kProbe, ack, Pins::kI2cSda,
+                          Pins::kI2cScl);
+          if (kEnableVerboseSerialLogs) {
+            LOGI("OLED1 ACK %s\r\n", ack ? "ok" : "fail");
+          }
+          if (ack) {
+            if (topo == DisplayTopology::kLargeOnly ||
+                topo == DisplayTopology::kLargePlusSmall) {
+              ok = initAndTestDisplay64(g_oled_primary, true, watchdog_slow_hz);
+            } else {
+              ok = initAndTestDisplay(g_oled_primary, true, watchdog_slow_hz);
+            }
+          }
+          if (ok) {
+            g_oled_primary.setRotation(flip0);
+            g_oled_primary.clearDisplay();
+            const bool ack_after = ProbeOled1Ack();
+            I2cOledLogEvent(1, I2cOledAction::kClear, ack_after, Pins::kI2cSda,
+                            Pins::kI2cScl);
+            if (kEnableVerboseSerialLogs) {
+              LOGI("OLED1 watchdog re-ACK %s\r\n", ack_after ? "ok" : "fail");
+            }
+            ok = ack_after;
+            if (ok) {
+              g_oled_primary.sendRawCommand(0xAF);
+              g_oled_primary.setBusClockHz(watchdog_fast_hz);
+            }
+          }
+          if (ok) {
+            any_success = true;
+          }
+          portENTER_CRITICAL(&g_state_mux);
+          g_state.oled_primary_ready = ok;
+          portEXIT_CRITICAL(&g_state_mux);
+        }
+
+        const bool secondary_ack =
+            secondary_ready ? g_oled_secondary.probeAddress() : false;
+        if (!secondary_ready || !secondary_ack) {
+          any_attempt = true;
+          g_oled_secondary.setBusClockHz(watchdog_slow_hz);
+          RecoverI2cBus(Pins::kI2c2Sda, Pins::kI2c2Scl, "OLED2",
+                        kEnableVerboseSerialLogs, true);
+          bool ok = false;
+          bool ack = g_oled_secondary.probeAddress();
+          if (kEnableVerboseSerialLogs) {
+            LOGI("OLED2 ACK %s\r\n", ack ? "ok" : "fail");
+          }
+          if (ack) {
+            ok =
+                initAndTestDisplay(g_oled_secondary, false, watchdog_slow_hz);
+          }
+          if (ok) {
+            g_oled_secondary.setRotation(flip1);
+            g_oled_secondary.clearDisplay();
+            const bool ack_after = g_oled_secondary.probeAddress();
+            I2cOledLogEvent(2, I2cOledAction::kClear, ack_after,
+                            Pins::kI2c2Sda, Pins::kI2c2Scl);
+            if (kEnableVerboseSerialLogs) {
+              LOGI("OLED2 watchdog re-ACK %s\r\n", ack_after ? "ok" : "fail");
+            }
+            ok = ack_after;
+            if (ok) {
+              g_oled_secondary.sendRawCommand(0xAF);
+              g_oled_secondary.setBusClockHz(watchdog_fast_hz);
+            }
+          }
+          if (ok) {
+            any_success = true;
+          }
+          portENTER_CRITICAL(&g_state_mux);
+          g_state.oled_secondary_ready = ok;
+          portEXIT_CRITICAL(&g_state_mux);
+        }
+
+        if (any_attempt) {
+          if (any_success) {
+            oled_watchdog_backoff_idx = 0;
+          } else if (oled_watchdog_backoff_idx + 1 < kBackoffCount) {
+            ++oled_watchdog_backoff_idx;
+          }
+        }
+
+        if ((now_ms - boot_ms) >= 5000U) {
+          bool primary_final = false;
+          bool secondary_final = false;
+          portENTER_CRITICAL(&g_state_mux);
+          primary_final = g_state.oled_primary_ready;
+          secondary_final = g_state.oled_secondary_ready;
+          portEXIT_CRITICAL(&g_state_mux);
+          const bool missing = (!primary_final || !secondary_final);
+          if (missing &&
+              (last_i2c_log_snapshot_ms == 0 ||
+               (now_ms - last_i2c_log_snapshot_ms) >= 60000U)) {
+            const bool saved = I2cOledLogSaveSnapshot(now_ms);
+            last_i2c_log_snapshot_ms = now_ms;
+            if (kEnableVerboseSerialLogs) {
+              LOGW("I2C/OLED log snapshot %s\r\n",
+                   saved ? "saved" : "failed");
+            }
+            if (!kEnableVerboseSerialLogs) {
+              (void)saved;
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Repeat I2C scan a few times so it's visible even if monitor opens late (optional).
   if (kEnableBootI2cScan) {
     if (!g_i2c_seen && g_i2c_scan_attempts < 4 &&
         (now_ms - g_last_i2c_scan_ms) >= 5000U) {
       g_i2c_seen = ScanI2cBuses();
+      Wire.begin(Pins::kI2cSda, Pins::kI2cScl);
+      g_wire_sda_pin = Pins::kI2cSda;
+      g_wire_scl_pin = Pins::kI2cScl;
+      {
+        uint32_t bus_hz = g_oled_primary.busClockHz();
+        if (bus_hz == 0) {
+          bus_hz = AppConfig::kBootI2cClockHz;
+        }
+        Wire.setClock(bus_hz);
+      }
+      Wire.setTimeOut(20);
       ++g_i2c_scan_attempts;
       g_last_i2c_scan_ms = now_ms;
     }
@@ -428,11 +848,30 @@ void AppLoopTick() {
       g_state.edit_mode.mode[secondary_zone_id] != EditModeState::Mode::kNone &&
       g_state.edit_mode.page[secondary_zone_id] ==
           currentPageIndex(g_state, secondary_zone_id);
-  const bool allow_oled1 =
-      (now_ms - g_state.last_oled_ms[0] >= 125) || g_state.force_redraw[0];
-  uint32_t oled2_interval = editing_oled2 ? 125 : 125;
-  if (g_oled_secondary.bus() == OledU8g2::Bus::kSw) {
-    oled2_interval = editing_oled2 ? 250 : 250;
+  uint32_t oled1_bus_hz = g_oled_primary.busClockHz();
+  if (oled1_bus_hz == 0) {
+    oled1_bus_hz = AppConfig::kI2cFrequencyHz;
+  }
+  uint32_t oled1_interval = (oled1_bus_hz <= 25000U) ? 250U : 125U;
+  bool allow_oled1 =
+      (now_ms - g_state.last_oled_ms[0] >= oled1_interval) ||
+      g_state.force_redraw[0];
+
+  uint32_t oled2_bus_hz = g_oled_secondary.busClockHz();
+  if (oled2_bus_hz == 0) {
+    oled2_bus_hz = AppConfig::kI2c2FrequencyHz;
+  }
+  uint32_t oled2_interval = 250U;
+  if (oled2_bus_hz <= 25000U) {
+    // Slow bus: reduce update rate under load to avoid jitter.
+    oled2_interval = (want_can ? 400U : 250U);
+  } else if (oled2_bus_hz <= 50000U) {
+    oled2_interval = 250U;
+  } else {
+    oled2_interval = 250U;
+  }
+  if (editing_oled2 && oled2_interval < 250U) {
+    oled2_interval = 250U;
   }
   static uint8_t prev_focus = 0;
   if (g_state.focus_screen != prev_focus) {
@@ -441,9 +880,31 @@ void AppLoopTick() {
     g_state.force_redraw[2] = true;
     prev_focus = g_state.focus_screen;
   }
-  const bool allow_oled2 =
+  bool allow_oled2 =
       ((now_ms - g_state.last_oled_ms[secondary_zone_id] >= oled2_interval) ||
-       g_state.force_redraw[secondary_zone_id]);
+       g_state.force_redraw[secondary_zone_id]) &&
+      ((now_ms - g_state.last_oled_ms[0]) >= 50U);
+
+  // Stagger at very slow I2C: never send both buffers in the same tick.
+  static bool prefer_primary_next = true;
+  const bool slow_bus =
+      (g_oled_primary.busClockHz() != 0 &&
+       g_oled_primary.busClockHz() <= 25000U) ||
+      (g_oled_secondary.busClockHz() != 0 &&
+       g_oled_secondary.busClockHz() <= 25000U);
+  if (slow_bus && allow_oled1 && allow_oled2) {
+    if (prefer_primary_next) {
+      allow_oled2 = false;
+    } else {
+      // Defer OLED1 this tick.
+      if (!g_state.force_redraw[0]) {
+        allow_oled1 = false;
+      } else {
+        allow_oled2 = false;
+      }
+    }
+    prefer_primary_next = !prefer_primary_next;
+  }
 
   // FPS instrumentation
   static uint32_t fps1_count = 0;

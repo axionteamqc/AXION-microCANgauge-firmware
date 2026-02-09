@@ -320,6 +320,7 @@ void renderActions(const SendFn& send) {
   send("<button type='submit' name='action' value='apply' "
        "onclick=\"syncBootPages(); return submitAction('Apply config and reboot?');\">Config & Reboot</button>");
   send("<button type='button' onclick=\"location.href='/fw';\">Firmware Update</button>");
+  send("<button type='button' onclick=\"location.href='/i2c';\">I2C/OLED Logs</button>");
   send("<button type='submit' name='action' value='reset_extrema' "
        "onclick=\"syncBootPages(); return submitAction('Reset recorded extrema and max values?');\">Reset Extrema</button>");
   send("<button type='submit' name='action' value='factory_reset' "

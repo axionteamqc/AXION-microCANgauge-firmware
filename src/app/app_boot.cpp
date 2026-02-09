@@ -7,6 +7,7 @@
 #include "app/app_globals.h"
 #include "app/app_runtime.h"
 #include "app/app_sleep.h"
+#include "app/i2c_oled_log.h"
 #include "app_config.h"
 #include "app_state.h"
 #include "app/page_mask.h"
@@ -286,8 +287,21 @@ void AppSetup() {
   }
 
   // Step 1: I2C bring-up
+  const uint32_t oled1_boot_hz = AppConfig::kBootI2cClockHz;
+  const uint32_t oled2_boot_hz =
+      AppConfig::kSafeCableI2cEnabled ? AppConfig::kSafeCableBootI2cHz
+                                      : AppConfig::kI2c2FrequencyHz;
+  bool i2c1_ok = RecoverI2cBus(Pins::kI2cSda, Pins::kI2cScl, "OLED1",
+                               kEnableVerboseSerialLogs);
   Wire.begin(Pins::kI2cSda, Pins::kI2cScl);
-  Wire.setClock(AppConfig::kI2cFrequencyHz);
+  g_wire_sda_pin = Pins::kI2cSda;
+  g_wire_scl_pin = Pins::kI2cScl;
+  const uint32_t i2c_begin_ms = millis();
+  Wire.setClock(oled1_boot_hz);
+  LOGI("OLED1 bus clock = %lu Hz (boot)\r\n",
+       static_cast<unsigned long>(oled1_boot_hz));
+  LOGI("OLED2 bus clock = %lu Hz (boot)\r\n",
+       static_cast<unsigned long>(oled2_boot_hz));
 #if defined(ESP32)
   Wire.setTimeOut(20);  // bound I2C stalls at boot; harmless if bus is healthy
 #else
@@ -306,6 +320,8 @@ void AppSetup() {
   }
 
   // Step 2/3: OLED init per topology with graceful fallbacks
+  bool i2c2_ok = RecoverI2cBus(Pins::kI2c2Sda, Pins::kI2c2Scl, "OLED2",
+                               kEnableVerboseSerialLogs);
   auto probeAddr = []() {
     Wire.beginTransmission(0x3C);
     if (Wire.endTransmission() == 0) return true;
@@ -314,60 +330,43 @@ void AppSetup() {
   };
   auto initPrimary32 = [&]() {
     if (g_state.oled_primary_ready) return true;
-    constexpr uint8_t kAttempts = 3;
-    constexpr uint32_t kRetryDelayMs = 30;
-    for (uint8_t i = 0; i < kAttempts && !g_state.oled_primary_ready; ++i) {
-      g_state.oled_primary_ready =
-          initAndTestDisplay(g_oled_primary, true, AppConfig::kI2cFrequencyHz);
-      if (g_state.oled_primary_ready) {
-        g_oled_primary.setRotation(g_state.screen_cfg[0].flip_180);
-        g_oled_primary.clearDisplay();
-        break;
-      }
-      if (kEnableVerboseSerialLogs) {
-        LOGI("OLED1 128x32 init retry %u/%u\r\n",
-             static_cast<unsigned>(i + 1), static_cast<unsigned>(kAttempts));
-      }
-      delay(kRetryDelayMs);
+    if (!i2c1_ok) return false;
+    g_state.oled_primary_ready =
+        initAndTestDisplay(g_oled_primary, true, oled1_boot_hz);
+    if (g_state.oled_primary_ready) {
+      g_oled_primary.setRotation(g_state.screen_cfg[0].flip_180);
+      g_oled_primary.clearDisplay();
+      I2cOledLogEvent(1, I2cOledAction::kClear, true, Pins::kI2cSda,
+                      Pins::kI2cScl);
+      g_oled_primary.sendRawCommand(0xAF);
     }
     return g_state.oled_primary_ready;
   };
   auto initPrimary64 = [&]() {
     if (g_state.oled_primary_ready) return true;
-    constexpr uint8_t kAttempts = 3;
-    constexpr uint32_t kRetryDelayMs = 30;
-    for (uint8_t i = 0; i < kAttempts && !g_state.oled_primary_ready; ++i) {
-      g_state.oled_primary_ready =
-          initAndTestDisplay64(g_oled_primary, true, AppConfig::kI2cFrequencyHz);
-      if (g_state.oled_primary_ready) {
-        g_oled_primary.setRotation(g_state.screen_cfg[0].flip_180);
-        g_oled_primary.clearDisplay();
-        break;
-      }
-      if (kEnableVerboseSerialLogs) {
-        LOGI("OLED1 128x64 init retry %u/%u\r\n",
-             static_cast<unsigned>(i + 1), static_cast<unsigned>(kAttempts));
-      }
-      delay(kRetryDelayMs);
+    if (!i2c1_ok) return false;
+    g_state.oled_primary_ready =
+        initAndTestDisplay64(g_oled_primary, true, oled1_boot_hz);
+    if (g_state.oled_primary_ready) {
+      g_oled_primary.setRotation(g_state.screen_cfg[0].flip_180);
+      g_oled_primary.clearDisplay();
+      I2cOledLogEvent(1, I2cOledAction::kClear, true, Pins::kI2cSda,
+                      Pins::kI2cScl);
+      g_oled_primary.sendRawCommand(0xAF);
     }
     return g_state.oled_primary_ready;
   };
   auto initSecondary32 = [&]() {
-    constexpr uint8_t kAttempts = 3;
-    constexpr uint32_t kRetryDelayMs = 30;
-    for (uint8_t i = 0; i < kAttempts && !g_state.oled_secondary_ready; ++i) {
-      g_state.oled_secondary_ready = initAndTestDisplay(
-          g_oled_secondary, false, AppConfig::kI2c2FrequencyHz);
-      if (g_state.oled_secondary_ready) {
-        g_oled_secondary.setRotation(g_state.screen_cfg[1].flip_180);
-        g_oled_secondary.clearDisplay();
-        break;
-      }
-      if (kEnableVerboseSerialLogs) {
-        LOGI("OLED2 128x32 init retry %u/%u\r\n",
-             static_cast<unsigned>(i + 1), static_cast<unsigned>(kAttempts));
-      }
-      delay(kRetryDelayMs);
+    if (g_state.oled_secondary_ready) return true;
+    if (!i2c2_ok) return false;
+    g_state.oled_secondary_ready =
+        initAndTestDisplay(g_oled_secondary, false, oled2_boot_hz);
+    if (g_state.oled_secondary_ready) {
+      g_oled_secondary.setRotation(g_state.screen_cfg[1].flip_180);
+      g_oled_secondary.clearDisplay();
+      I2cOledLogEvent(2, I2cOledAction::kClear, true, Pins::kI2c2Sda,
+                      Pins::kI2c2Scl);
+      g_oled_secondary.sendRawCommand(0xAF);
     }
     return g_state.oled_secondary_ready;
   };
@@ -442,20 +441,75 @@ void AppSetup() {
   };
 
   initForTopology();
-  if (kBootOledRetryDelayMs > 0 && !g_state.oled_primary_ready &&
-      !g_state.oled_secondary_ready) {
-    if (kEnableVerboseSerialLogs) {
-      LOGW("OLED init retry after %lums\r\n",
-           static_cast<unsigned long>(kBootOledRetryDelayMs));
+  // Late OLED retries (non-blocking schedule based on millis).
+  {
+    const uint32_t kRetryOffsetsMs[] = {200, 500, 1000, 2000};
+    const size_t kRetryCount = sizeof(kRetryOffsetsMs) / sizeof(kRetryOffsetsMs[0]);
+    size_t retry_idx = 0;
+    while (retry_idx < kRetryCount) {
+      const bool need_secondary =
+          (g_state.display_topology == DisplayTopology::kDualSmall ||
+           g_state.display_topology == DisplayTopology::kLargePlusSmall);
+      if (g_state.oled_primary_ready &&
+          (g_state.oled_secondary_ready || !need_secondary)) {
+        break;  // OLEDs confirmed (init + clearDisplay).
+      }
+      const uint32_t now_ms = millis();
+      const uint32_t due_ms = i2c_begin_ms + kRetryOffsetsMs[retry_idx];
+      if (static_cast<int32_t>(now_ms - due_ms) < 0) {
+        AppSleepMs(1);
+        continue;
+      }
+      if (!g_state.oled_primary_ready) {
+        i2c1_ok = RecoverI2cBus(Pins::kI2cSda, Pins::kI2cScl, "OLED1",
+                                kEnableVerboseSerialLogs);
+      }
+      if (!g_state.oled_secondary_ready) {
+        i2c2_ok = RecoverI2cBus(Pins::kI2c2Sda, Pins::kI2c2Scl, "OLED2",
+                                kEnableVerboseSerialLogs);
+      }
+      if (kEnableVerboseSerialLogs) {
+        LOGW("OLED late retry %u/%u\r\n",
+             static_cast<unsigned>(retry_idx + 1),
+             static_cast<unsigned>(kRetryCount));
+      }
+      // Retry missing displays without changing topology.
+      switch (g_state.display_topology) {
+        case DisplayTopology::kSmallOnly:
+          initPrimary32();
+          break;
+        case DisplayTopology::kDualSmall:
+          initPrimary32();
+          initSecondary32();
+          break;
+        case DisplayTopology::kLargeOnly:
+          initPrimary64();
+          break;
+        case DisplayTopology::kLargePlusSmall:
+          initPrimary64();
+          initSecondary32();
+          break;
+        case DisplayTopology::kUnconfigured:
+        default:
+          if (probeAddr()) {
+            if (!initPrimary64()) {
+              initPrimary32();
+            }
+          }
+          break;
+      }
+      ++retry_idx;
     }
-    delay(kBootOledRetryDelayMs);
-    initForTopology();
   }
   showSoarerProgress(g_oled_primary, 75);
 
   // Step 4: finalize UI state
   g_state.dual_screens =
       g_state.oled_primary_ready && g_state.oled_secondary_ready;
+  g_i2c_seen = g_state.oled_primary_ready || g_state.oled_secondary_ready;
+  if (g_i2c_seen) {
+    g_i2c_scan_attempts = 255;
+  }
   g_state.focus_screen = g_state.focus_zone % GetActiveZoneCount(g_state);
   const bool has_page_cfg =
       !cfg_pending && (ui_p.has_boot_pages || ui_p.has_page0 || ui_p.has_page1);

@@ -50,6 +50,10 @@ class OledU8g2 {
   void clearDisplay();
   uint16_t measureText(const char* text, const uint8_t* font);
   Bus bus() const { return bus_; }
+  bool probeAddress();
+  bool sendRawCommand(uint8_t cmd);
+  void setBusClockHz(uint32_t bus_hz);
+  uint32_t busClockHz() const { return bus_hz_; }
 
  private:
   Bus bus_;
@@ -57,6 +61,7 @@ class OledU8g2 {
   uint8_t data_pin_;
   int8_t reset_pin_;
   bool ready_;
+  uint32_t bus_hz_;
   alignas(::max_align_t) uint8_t storage_[512];
   U8G2* u8g2_;
   bool invert_on_;
@@ -65,5 +70,10 @@ class OledU8g2 {
   void createDisplay(Profile profile);
   void createDisplay64();
   bool probeHwAddress();
+  bool probeSwAddress();
+  bool probeBusAddress();
   void ensureFonts();
 };
+
+uint32_t GetSwI2cDelayUs();
+void SetSwI2cDelayUs(uint32_t delay_us);

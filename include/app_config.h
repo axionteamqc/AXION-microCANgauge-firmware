@@ -15,6 +15,24 @@
 namespace AppConfig {
 
 constexpr uint32_t kI2cFrequencyHz = 100000;
+// Boot bring-up I2C clock (safer at power/brown-in).
+#ifndef BOOT_I2C_ULTRA_SAFE
+#define BOOT_I2C_ULTRA_SAFE 0
+#endif
+#ifndef SAFE_CABLE_I2C
+#define SAFE_CABLE_I2C 0
+#endif
+#ifndef SAFE_I2C_CABLE
+#define SAFE_I2C_CABLE 0
+#endif
+constexpr bool kSafeCableI2cEnabled =
+    (SAFE_I2C_CABLE != 0) || (SAFE_CABLE_I2C != 0);
+constexpr uint32_t kSafeCableBootI2cHz = 25000;
+constexpr uint32_t kSafeCableRuntimeI2cHz = 50000;
+constexpr uint32_t kBootI2cClockHz =
+    kSafeCableI2cEnabled
+        ? kSafeCableBootI2cHz
+        : ((BOOT_I2C_ULTRA_SAFE != 0) ? 50000 : 100000);
 
 constexpr uint8_t kOledWidth = 128;
 constexpr uint8_t kOledHeight = 32;
