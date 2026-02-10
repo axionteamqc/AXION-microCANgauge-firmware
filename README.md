@@ -33,6 +33,13 @@ The end‑user manual for the **Action MicroCANgauge** is provided as interactiv
 - **English:** [`docs/AXION_Flipbook_v1_3_1_EN_FINAL.html`](docs/AXION_Flipbook_v1_3_1_EN_FINAL.html)
 - **Français:** [`docs/AXION_Flipbook_v1_3_1_FR_FINAL.html`](docs/AXION_Flipbook_v1_3_1_FR_FINAL.html)
 
+
+Printable / shareable PDFs (screen‑friendly portrait):
+
+- **English (PDF):** [`docs/AXION_MCG_DOC_v1_3_EN_SCREEN_PORTRAIT.pdf`](docs/AXION_MCG_DOC_v1_3_EN_SCREEN_PORTRAIT.pdf)
+- **Français (PDF):** [`docs/AXION_MCG_DOC_v1_3_FR_SCREEN_PORTRAIT.pdf`](docs/AXION_MCG_DOC_v1_3_FR_SCREEN_PORTRAIT.pdf)
+
+
 ### Quick access (GitHub Pages)
 
 Recommended config: **Settings → Pages → Deploy from a branch → Branch: `main` → Folder: `/docs`**.  
@@ -47,6 +54,10 @@ With that setup, the flipbooks open here:
 
 - EN (raw): `https://raw.githubusercontent.com/axionteamqc/AXION-microCANgauge-firmware/main/docs/AXION_Flipbook_v1_3_1_EN_FINAL.html`
 - FR (raw): `https://raw.githubusercontent.com/axionteamqc/AXION-microCANgauge-firmware/main/docs/AXION_Flipbook_v1_3_1_FR_FINAL.html`
+
+- EN PDF (raw): `https://raw.githubusercontent.com/axionteamqc/AXION-microCANgauge-firmware/main/docs/AXION_MCG_DOC_v1_3_EN_SCREEN_PORTRAIT.pdf`
+- FR PDF (raw): `https://raw.githubusercontent.com/axionteamqc/AXION-microCANgauge-firmware/main/docs/AXION_MCG_DOC_v1_3_FR_SCREEN_PORTRAIT.pdf`
+
 
 <p float="left">
   <img src="media/renders/AXION_Booklet_Cover_v1_3_1.jpg" width="260" />
