@@ -26,6 +26,32 @@ If you use **Advanced** mode and change base IDs / layout, your frames will not 
 - Optional OTA update path (if enabled in build/profile)
 
 
+## User manual (interactive HTML flipbook)
+
+The end‑user manual for the **Action MicroCANgauge** is provided as interactive HTML flipbooks (stored in `docs/`):
+
+- **English:** [`docs/AXION_Flipbook_v1_3_1_EN_FINAL.html`](docs/AXION_Flipbook_v1_3_1_EN_FINAL.html)
+- **Français:** [`docs/AXION_Flipbook_v1_3_1_FR_FINAL.html`](docs/AXION_Flipbook_v1_3_1_FR_FINAL.html)
+
+### Quick access (GitHub Pages)
+
+Recommended config: **Settings → Pages → Deploy from a branch → Branch: `main` → Folder: `/docs`**.  
+With that setup, the flipbooks open here:
+
+- EN: `https://axionteamqc.github.io/AXION-microCANgauge-firmware/AXION_Flipbook_v1_3_1_EN_FINAL.html`
+- FR: `https://axionteamqc.github.io/AXION-microCANgauge-firmware/AXION_Flipbook_v1_3_1_FR_FINAL.html`
+
+> If the repository name is different, replace `AXION-microCANgauge-firmware` in the URLs above with your repo name.
+
+### Offline (download + open locally)
+
+- EN (raw): `https://raw.githubusercontent.com/axionteamqc/AXION-microCANgauge-firmware/main/docs/AXION_Flipbook_v1_3_1_EN_FINAL.html`
+- FR (raw): `https://raw.githubusercontent.com/axionteamqc/AXION-microCANgauge-firmware/main/docs/AXION_Flipbook_v1_3_1_FR_FINAL.html`
+
+<p float="left">
+  <img src="media/renders/AXION_Booklet_Cover_v1_3_1.jpg" width="260" />
+</p>
+
 ## Media / gallery
 A few quick reference images (renders + PCB review photos). Full set in `media/README.md`.
 
@@ -60,7 +86,7 @@ It is **not** an authenticated admin interface. Treat it accordingly.
 - `src/` — firmware source
 - `test/` — small unit tests
 - `hardware_review/` — PCB photos + schematic (for review; no Gerbers)
-- `docs/` — misc internal artifacts (diff reports, etc.)
+- `docs/` — documentation (incl. interactive user manuals / flipbooks)
 
 
 
